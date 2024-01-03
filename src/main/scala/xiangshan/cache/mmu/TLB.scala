@@ -94,7 +94,7 @@ class TLB(Width: Int, nRespDups: Int = 1, Block: Seq[Boolean], q: TLBParameters)
   )))
   val need_gpa = RegInit(false.B)
   val need_gpa_vpn = Reg(UInt(vpnLen.W))
-  val need_gpa_gvpn = Reg(UInt(vpnLen.W))
+  val need_gpa_gppn = Reg(UInt(vpnLen.W))
   val hasGpf = Wire(Vec(Width, Bool()))
 
   // val vmEnable = satp.mode === 8.U // && (mode < ModeM) // FIXME: fix me when boot xv6/linux...
@@ -146,7 +146,7 @@ class TLB(Width: Int, nRespDups: Int = 1, Block: Seq[Boolean], q: TLBParameters)
   /************************  main body above | method/log/perf below ****************************/
   def TLBRead(i: Int) = {
     val (e_hit, e_ppn, e_perm, e_g_perm, e_s2xlate) = entries.io.r_resp_apply(i)
-    val (p_hit, p_ppn, p_perm, p_gvpn, p_g_perm, p_s2xlate) = ptw_resp_bypass(get_pn(req_in(i).bits.vaddr), req_in_s2xlate(i))
+    val (p_hit, p_ppn, p_perm, p_gppn, p_g_perm, p_s2xlate) = ptw_resp_bypass(get_pn(req_in(i).bits.vaddr), req_in_s2xlate(i))
     val enable = portTranslateEnable(i)
     val isOnlys2xlate = req_out_s2xlate(i) === onlyStage2
     val resp_gpa_refill = RegInit(false.B)
@@ -157,7 +157,7 @@ class TLB(Width: Int, nRespDups: Int = 1, Block: Seq[Boolean], q: TLBParameters)
       resp_gpa_refill := false.B
     }
     when (ptw.resp.fire && need_gpa && need_gpa_vpn === ptw.resp.bits.getVpn) {
-      need_gpa_gvpn := Mux(ptw.resp.bits.s2xlate === onlyStage2, ptw.resp.bits.s2.entry.tag, Cat(ptw.resp.bits.s1.entry.tag, ptw.resp.bits.s1.ppn_low(OHToUInt(ptw.resp.bits.s1.pteidx))))
+      need_gpa_gppn := Mux(ptw.resp.bits.s2xlate === onlyStage1, Cat(ptw.resp.bits.s1.entry.ppn, ptw.resp.bits.s1.ppn_low(OHToUInt(ptw.resp.bits.s1.pteidx))), ptw.resp.bits.s2.entry.tag)
       resp_gpa_refill := true.B
     }
 
@@ -177,17 +177,17 @@ class TLB(Width: Int, nRespDups: Int = 1, Block: Seq[Boolean], q: TLBParameters)
 
     val ppn = WireInit(VecInit(Seq.fill(nRespDups)(0.U(ppnLen.W))))
     val perm = WireInit(VecInit(Seq.fill(nRespDups)(0.U.asTypeOf(new TlbPermBundle))))
-    val gvpn = WireInit(VecInit(Seq.fill(nRespDups)(0.U(vpnLen.W))))
+    val gppn = WireInit(VecInit(Seq.fill(nRespDups)(0.U(vpnLen.W))))
     val g_perm = WireInit(VecInit(Seq.fill(nRespDups)(0.U.asTypeOf(new TlbPermBundle))))
     val r_s2xlate = WireInit(VecInit(Seq.fill(nRespDups)(0.U(2.W))))
     for (d <- 0 until nRespDups) {
       ppn(d) := Mux(p_hit, p_ppn, e_ppn(d))
       perm(d) := Mux(p_hit, p_perm, e_perm(d))
-      gvpn(d) :=  Mux(hasGpf(i), Mux(p_hit, p_gvpn, need_gpa_gvpn), 0.U)
+      gppn(d) :=  Mux(hasGpf(i), Mux(p_hit, p_gppn, need_gpa_gppn), 0.U)
       g_perm(d) := Mux(p_hit, p_g_perm, e_g_perm(d))
       r_s2xlate(d) := Mux(p_hit, p_s2xlate, e_s2xlate(d))
       val paddr = Cat(ppn(d), get_off(req_out(i).vaddr))
-      val gpaddr = Cat(gvpn(d), get_off(req_out(i).vaddr))
+      val gpaddr = Cat(gppn(d), get_off(req_out(i).vaddr))
       resp(i).bits.paddr(d) := Mux(enable, paddr, vaddr)
       resp(i).bits.gpaddr(d) := Mux(r_s2xlate(d) === onlyStage2, vaddr, gpaddr)
     }
@@ -378,10 +378,10 @@ class TLB(Width: Int, nRespDups: Int = 1, Block: Seq[Boolean], q: TLBParameters)
     val ppn_s2 = ptw.resp.bits.s2.genPPNS2(vpn)
     val p_ppn = RegEnable(Mux(hasS2xlate, ppn_s2, ppn_s1), io.ptw.resp.fire)
     val p_perm = RegEnable(ptwresp_to_tlbperm(ptw.resp.bits.s1), io.ptw.resp.fire)
-    val p_gvpn = RegEnable(Mux(onlyS2, ptw.resp.bits.s2.entry.tag, Cat(ptw.resp.bits.s1.entry.tag, ptw.resp.bits.s1.ppn_low(OHToUInt(ptw.resp.bits.s1.pteidx)))), io.ptw.resp.fire)
+    val p_gppn = RegEnable(Mux(ptw.resp.bits.s2xlate === onlyStage1, Cat(ptw.resp.bits.s1.entry.ppn, ptw.resp.bits.s1.ppn_low(OHToUInt(ptw.resp.bits.s1.pteidx))), ptw.resp.bits.s2.entry.tag), io.ptw.resp.fire)
     val p_g_perm = RegEnable(hptwresp_to_tlbperm(ptw.resp.bits.s2), io.ptw.resp.fire)
     val p_s2xlate = RegEnable(ptw.resp.bits.s2xlate, io.ptw.resp.fire)
-    (p_hit, p_ppn, p_perm, p_gvpn, p_g_perm, p_s2xlate)
+    (p_hit, p_ppn, p_perm, p_gppn, p_g_perm, p_s2xlate)
   }
 
   // assert
