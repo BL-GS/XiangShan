@@ -1159,13 +1159,13 @@ class PtwSectorResp(implicit p: Parameters) extends PtwBundle {
       val hit0 = entry.tag(sectorvpnLen - 1, vpnnLen * 2 - sectortlbwidth) === vpn(vpnLen - 1, vpnnLen * 2)
       val hit1 = entry.tag(vpnnLen * 2 - sectortlbwidth - 1, vpnnLen - sectortlbwidth)   === vpn(vpnnLen * 2 - 1,  vpnnLen)
       val hit2 = entry.tag(vpnnLen - sectortlbwidth - 1, 0) === vpn(vpnnLen - 1, sectortlbwidth)
-      val addr_low_hit = valididx(vpn(sectortlbwidth - 1, 0))
+      val addr_low_hit = Mux(s2xlate, vpn(sectortlbwidth - 1, 0) === addr_low, valididx(vpn(sectortlbwidth - 1, 0)))
 
-      asid_hit && vmid_hit && Mux(entry.level.getOrElse(0.U) === 2.U, hit2 && hit1 && hit0, Mux(entry.level.getOrElse(0.U) === 1.U, hit1 && hit0, hit0)) && addr_low_hit
+      asid_hit && vmid_hit && Mux(entry.level.getOrElse(0.U) === 2.U || s2xlate, hit2 && hit1 && hit0, Mux(entry.level.getOrElse(0.U) === 1.U, hit1 && hit0, hit0)) && addr_low_hit
     } else {
       val hit0 = entry.tag(sectorvpnLen - 1, sectorvpnLen - vpnnLen) === vpn(vpnLen - 1, vpnLen - vpnnLen)
       val hit1 = entry.tag(sectorvpnLen - vpnnLen - 1, sectorvpnLen - vpnnLen * 2) === vpn(vpnLen - vpnnLen - 1, vpnLen - vpnnLen * 2)
-      val addr_low_hit = valididx(vpn(sectortlbwidth - 1, 0))
+      val addr_low_hit = Mux(s2xlate, vpn(sectortlbwidth - 1, 0) === addr_low, valididx(vpn(sectortlbwidth - 1, 0)))
 
       asid_hit && vmid_hit && Mux(entry.level.getOrElse(0.U) === 0.U, hit0, hit0 && hit1) && addr_low_hit
     }
